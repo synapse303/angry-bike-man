@@ -5,4 +5,5 @@ public class Bridge {
   public Bridge(MainActivity a){ this.a=a; }
   @JavascriptInterface public void speak(String t){ a.speakNow(t); }
   @JavascriptInterface public void stop(){ a.stopNow(); }
+  @JavascriptInterface public void synth(String id,String t){ a.synthNow(id,t); }
 }

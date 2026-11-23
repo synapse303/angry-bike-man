@@ -11,7 +11,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%}
 #steer{position:absolute;left:0;bottom:0;width:42vw;height:55vh}
 .arrow{position:absolute;bottom:5vh;width:19vh;height:19vh;border-radius:50%;background:rgba(255,255,255,.16);border:.5vh solid rgba(255,255,255,.55);color:#fff;font-size:8vh;display:flex;align-items:center;justify-content:center;box-sizing:border-box;pointer-events:none}
 #la{left:3vw}#ra{left:calc(3vw + 22vh)}
-#gas{right:3vw;bottom:5vh;width:23vh;height:23vh;background:rgba(0,200,90,.3)}
+#gas{right:3vw;bottom:5vh;width:23vh;height:23vh;background:rgba(0,200,90,.3);font-size:6vh}
 #brake{right:calc(3vw + 26vh);bottom:4vh;width:17vh;height:17vh;background:rgba(230,40,40,.3)}
 #horn{right:5vw;bottom:32vh;width:14vh;height:14vh;font-size:3vh;background:rgba(255,150,0,.3)}
 #tog{position:absolute;top:2vh;right:2vw;display:flex;gap:1.5vw;z-index:5}
@@ -23,7 +23,7 @@ canvas{position:absolute;left:0;top:0;width:100%;height:100%}
 <div id="ctl">
   <div id="steer"><div class="arrow" id="la">&#9664;</div><div class="arrow" id="ra">&#9654;</div></div>
   <div class="btn" id="brake">BRAKE</div>
-  <div class="btn" id="gas">GAS</div>
+  <div class="btn" id="gas">GO</div>
   <div class="btn" id="horn">HONK</div>
 </div>
 <div id="tog"><div id="mus">&#9835;</div><div id="voi">&#128483;</div></div>
@@ -491,7 +491,7 @@ function ensureAudio(){
     leadIn.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(wet);wet.connect(musicBus);
     engOsc=AC.createOscillator();engOsc.type='sawtooth';engOsc2=AC.createOscillator();engOsc2.type='square';engFilt=AC.createBiquadFilter();engFilt.type='lowpass';engFilt.frequency.value=500;
     engGain=AC.createGain();engGain.gain.value=0;engOsc.connect(engFilt);engOsc2.connect(engFilt);engFilt.connect(engGain);engGain.connect(sfxBus);engOsc.start();engOsc2.start();
-    nextT=AC.currentTime+0.1;setInterval(sched,25);
+    nextT=AC.currentTime+0.1;setInterval(sched,25);setTimeout(preloadVoice,50);
   }
   if(AC.state==='suspended'&&!paused)AC.resume();
 }
@@ -542,10 +542,51 @@ function sfxSkid(){if(!AC)return;const t=AC.currentTime;tone(t,'pulse',1400,0.7,
 function sfxBump(){if(!AC)return;const t=AC.currentTime;noiseHit(t,0.18,0.7,'lowpass',500,sfxBus);}
 
 // ================= speech =================
-function speak(t){if(!voiceOn||state==='title')return;const s=t.toLowerCase().replace(/[a-z]*\*+[a-z*]*/g,'bleep').replace(/!+/g,'!');
+// On Android: phone TTS renders each phrase to a clip, which we push through an "angry shout" FX chain.
+const VOICE={map:new Map(),ids:[],buf:{},asked:false,active:[],chain:null,lfo:null};
+const clipMode=()=>!!(window.Android&&window.Android.synth&&AC);
+function lineSegs(t){const out=[];for(const p of t.toLowerCase().split(/([a-z]*\*+[a-z*]*)/)){if(!p)continue;if(p.indexOf('*')>=0)out.push(null);else{const c=p.replace(/[^a-z0-9' ,.!?-]/g,'').trim();if(/[a-z0-9]/.test(c))out.push(c);}}return out;}
+function voiceId(seg){let id=VOICE.map.get(seg);if(id===undefined){id='s'+VOICE.ids.length;VOICE.ids.push(seg);VOICE.map.set(seg,id);}return id;}
+function preloadVoice(){if(VOICE.asked||!clipMode())return;VOICE.asked=true;
+  for(const k in LINES)for(const line of LINES[k])for(const seg of lineSegs(line))if(seg){const fresh=!VOICE.map.has(seg);const id=voiceId(seg);if(fresh)try{window.Android.synth(id,seg)}catch(e){}}}
+window.onVoiceClip=function(id,b64){if(!AC)return;try{const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+  AC.decodeAudioData(u.buffer,ab=>{VOICE.buf[id]=trimClip(ab);},()=>{});}catch(e){}};
+function trimClip(ab){const d=ab.getChannelData(0),thr=0.015;let a=0,b=d.length-1;while(a<b&&Math.abs(d[a])<thr)a++;while(b>a&&Math.abs(d[b])<thr)b--;
+  const pad=Math.floor(ab.sampleRate*0.015);a=Math.max(0,a-pad);b=Math.min(d.length-1,b+pad);const out=AC.createBuffer(1,b-a+1,ab.sampleRate);out.getChannelData(0).set(d.subarray(a,b+1));return out;}
+function voiceChain(){if(VOICE.chain)return VOICE.chain;
+  const inp=AC.createGain();
+  const hp=AC.createBiquadFilter();hp.type='highpass';hp.frequency.value=170;
+  const pres=AC.createBiquadFilter();pres.type='peaking';pres.frequency.value=1900;pres.Q.value=0.9;pres.gain.value=10;   // shouty mids
+  const nasal=AC.createBiquadFilter();nasal.type='peaking';nasal.frequency.value=900;nasal.Q.value=1.2;nasal.gain.value=4;
+  inp.connect(hp);hp.connect(pres);pres.connect(nasal);
+  const drive=AC.createGain();drive.gain.value=3.2;const sh=AC.createWaveShaper();const c=new Float32Array(2048);for(let i=0;i<2048;i++){const x=i/1024-1;c[i]=Math.tanh(x*3.5);}sh.curve=c;sh.oversample='4x';
+  const lp=AC.createBiquadFilter();lp.type='lowpass';lp.frequency.value=6500;const wet=AC.createGain();wet.gain.value=0.55;
+  nasal.connect(drive);drive.connect(sh);sh.connect(lp);lp.connect(wet);           // gritty, strained-throat layer
+  const dry=AC.createGain();dry.gain.value=0.6;nasal.connect(dry);                 // clean layer keeps it understandable
+  const comp=AC.createDynamicsCompressor();comp.threshold.value=-26;comp.knee.value=4;comp.ratio.value=10;comp.attack.value=0.002;comp.release.value=0.08;
+  const out=AC.createGain();out.gain.value=1.7;wet.connect(comp);dry.connect(comp);comp.connect(out);out.connect(sfxBus);
+  const lfo=AC.createOscillator();lfo.frequency.value=7.5;const lg=AC.createGain();lg.gain.value=28;lfo.connect(lg);lfo.start();VOICE.lfo=lg; // rage tremble (cents)
+  VOICE.chain=inp;return inp;}
+function bleep(t,d){tone(t,'sine',1000,d,0.28,sfxBus,{a:0.004,sus:0.97});}
+function playClipLine(t){const segs=lineSegs(t);if(!segs.length)return false;for(const g of segs)if(g&&!VOICE.buf[voiceId(g)])return false;
+  stopClips();const inp=voiceChain();let when=AC.currentTime+0.03;const r0=rand(1.1,1.2),n=segs.length;
+  segs.forEach((g,i)=>{
+    if(g===null){bleep(when,0.34);when+=0.36;return;}
+    const b=VOICE.buf[voiceId(g)],r=r0*(1+i*0.04),dur=b.duration/r;
+    for(const dbl of [0,1]){const src=AC.createBufferSource();src.buffer=b;src.playbackRate.setValueAtTime(r,when);
+      if(i===n-1)src.playbackRate.linearRampToValueAtTime(r*1.13,when+dur);             // voice cracks up at the end
+      src.detune.value=dbl?-38:0;VOICE.lfo.connect(src.detune);
+      const g2=AC.createGain();g2.gain.value=dbl?0.38:1;src.connect(g2);g2.connect(inp);src.start(when+(dbl?0.022:0));VOICE.active.push(src);}
+    when+=dur-0.02;});
+  if(musicBus&&musicOn){const now=AC.currentTime;musicBus.gain.cancelScheduledValues(now);musicBus.gain.setTargetAtTime(0.22,now,0.03);musicBus.gain.setTargetAtTime(0.5,when,0.15);}
+  return true;}
+function stopClips(){for(const s of VOICE.active)try{s.stop()}catch(e){}VOICE.active=[];}
+function speak(t){if(!voiceOn||state==='title')return;
+  if(clipMode()){preloadVoice();if(playClipLine(t))return;}
+  const s=t.toLowerCase().replace(/[a-z]*\*+[a-z*]*/g,'bleep').replace(/!+/g,'!');
   try{if(window.Android&&window.Android.speak){window.Android.speak(s);return;}
-    if(window.speechSynthesis){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(s);u.pitch=0.6;u.rate=1.15;u.lang='en-GB';speechSynthesis.speak(u);}}catch(e){}}
-function stopSpeech(){try{if(window.Android&&window.Android.stop)window.Android.stop();else if(window.speechSynthesis)speechSynthesis.cancel();}catch(e){}}
+    if(window.speechSynthesis){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(s);u.pitch=0.5;u.rate=1.3;u.volume=1;u.lang='en-GB';speechSynthesis.speak(u);}}catch(e){}}
+function stopSpeech(){stopClips();try{if(window.Android&&window.Android.stop)window.Android.stop();else if(window.speechSynthesis)speechSynthesis.cancel();}catch(e){}}
 
 // ================= input =================
 function setControls(on){$('ctl').style.display=on?'block':'none';if(!on){tch.l=tch.r=tch.gas=tch.brake=false;document.querySelectorAll('.on').forEach(e=>e.classList.remove('on'));steerPts.clear();}}
