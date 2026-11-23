@@ -7,6 +7,6 @@ He mirrors your every move, shouts (censored) abuse at you, and from level 4 sta
 
 - 8-bit rock soundtrack, made entirely with Web Audio
 - Touch controls (◀ ▶ / GAS / BRAKE / HONK) or keyboard (arrows or WASD, Space to honk)
-- Android APK in [Releases](../../releases)
+- Android app: [download AngryBikeMan.apk](https://github.com/synapse303/angry-bike-man/raw/main/AngryBikeMan.apk)
 
 Everything is one self-contained `index.html`. The `android/` folder holds the WebView wrapper used to build the APK.
